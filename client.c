@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <syslog.h>
-
+#include"allStats.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -77,18 +77,50 @@ void error(const char *msg)
 //    exit(0);
 }
 
+char* getSerializedBuffer(size_t* buffsize)
+{
+	//Get All System Info
+	SystemStats *sStats=getAllProcStats();
+	//Allocate apporpriate buffer size
+	//first int is number of procs, the first proc struct is for the system
+	size_t size= sizeof(int) + (sStats->numProcs+1)*sizeof(ProcStats);
+	*buffsize=size;
+	size_t curr=0;
+    char *buffer=malloc(size);
+	ProcStats *system=malloc(sizeof(ProcStats));
+	system->cpuUsage=sStats->cpuUsage;
+	//First: integer for numProcs
+	memcpy(buffer,&(sStats->numProcs),sizeof(sStats->numProcs));
+	curr+=sizeof(sStats->numProcs);
+	//Second: ProcStat for system
+	memcpy(buffer+curr, system, sizeof(ProcStats));
+	curr+=sizeof(ProcStats);
+	//Last: Array of ProcStats for all pids
+	memcpy(buffer+curr, sStats->procStats, (sStats->numProcs)*sizeof(ProcStats));
+
+	free(sStats->procStats);	
+	free(sStats);
+	free(system);
+	return buffer;
+}
+
+
 int main(int argc, char *argv[])
 {
 
-daemonize();
-syslog(LOG_NOTICE, "daemonize complete");
+//daemonize();
+//syslog(LOG_NOTICE, "daemonize complete");
+
+size_t* buffsize=malloc(sizeof(size_t));
+
 while (1)
 {
     int sockfd, portno, n;
     struct sockaddr_in serv_addr;
     struct hostent *server;
 
-    char buffer[256];
+	//Get stats in serialized form
+	char *buffer=getSerializedBuffer(buffsize);
     if (argc < 3) {
        fprintf(stderr,"usage %s hostname port\n", argv[0]);
        exit(0);
@@ -110,20 +142,28 @@ while (1)
     serv_addr.sin_port = htons(portno);
     if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) 
         error("ERROR connecting");
-//    printf("Please enter the message: ");
-    bzero(buffer,256);
-    strcpy(buffer, "THis is a test message\n");
-//    fgets(buffer,255,stdin);
-    n = write(sockfd,buffer,strlen(buffer));
+
+	//Tell server what size to expect
+	n = write(sockfd, (char*)buffsize, sizeof(size_t));
 syslog(LOG_NOTICE, "Written data to socket");
     if (n < 0) 
          error("ERROR writing to socket");
+
+	n = write(sockfd,buffer,*buffsize);
+syslog(LOG_NOTICE, "Written data to socket");
+    if (n < 0) 
+         error("ERROR writing to socket");
+	
+
+/*		 
     bzero(buffer,256);
     n = read(sockfd,buffer,255);
     if (n < 0) 
          error("ERROR reading from socket");
 syslog(LOG_NOTICE, "Read data from socket");
 //    printf("%s\n",buffer);
+ */
+ 
     close(sockfd);
     sleep(2);	//give back cpu
 }
